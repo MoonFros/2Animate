@@ -16,6 +16,17 @@ export interface BrushCtx {
   invert: boolean
   /** only affect these stroke ids (selection masking); null = everything */
   mask: string[] | null
+  /** colour used by the tint brush */
+  color?: string
+}
+
+function mixHex(a: string, b: string, t: number) {
+  const pa = parseInt(a.slice(1), 16)
+  const pb = parseInt(b.slice(1), 16)
+  const r = Math.round(((pa >> 16) & 255) * (1 - t) + ((pb >> 16) & 255) * t)
+  const g = Math.round(((pa >> 8) & 255) * (1 - t) + ((pb >> 8) & 255) * t)
+  const bl = Math.round((pa & 255) * (1 - t) + (pb & 255) * t)
+  return '#' + ((1 << 24) | (r << 16) | (g << 8) | bl).toString(16).slice(1)
 }
 
 export function applyBrush(strokes: Stroke[], b: BrushCtx) {
@@ -89,6 +100,23 @@ export function applyBrush(strokes: Stroke[], b: BrushCtx) {
           const sn = Math.sin(a)
           pts[i].x = b.x + ox * c - oy * sn
           pts[i].y = b.y + ox * sn + oy * c
+        }
+        break
+      }
+      case 'tint': {
+        const target = b.color ?? '#3aa0ff'
+        for (let i = 0; i < pts.length; i++) {
+          const f = w(i) * 0.25
+          if (f <= 0) continue
+          if (b.invert) {
+            // wipe vertex colour back to the stroke colour
+            const cur = pts[i].c
+            if (!cur) continue
+            const back = mixHex(cur, s.color, Math.min(1, f * 2))
+            pts[i].c = back.toLowerCase() === s.color.toLowerCase() ? undefined : back
+          } else {
+            pts[i].c = mixHex(pts[i].c ?? s.color, target, Math.min(1, f))
+          }
         }
         break
       }

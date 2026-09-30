@@ -62,6 +62,7 @@ function drawStrokeVariableAlpha(ctx: CanvasRenderingContext2D, s: Stroke, colou
     const rb = Math.max(0.05, (s.width * (b.p ?? 1)) / 2)
     const sa = ((a.s ?? 1) + (b.s ?? 1)) / 2
     if (sa <= 0.004) continue
+    ctx.fillStyle = colour === s.color ? a.c ?? b.c ?? s.color : colour
     let dx = b.x - a.x
     let dy = b.y - a.y
     const l = Math.hypot(dx, dy) || 1
@@ -84,7 +85,7 @@ function drawStrokeVariableAlpha(ctx: CanvasRenderingContext2D, s: Stroke, colou
   }
 }
 
-const hasVariableAlpha = (s: Stroke) => s.pts.some((q) => q.s !== undefined && q.s < 0.999)
+const hasVariableAlpha = (s: Stroke) => s.pts.some((q) => (q.s !== undefined && q.s < 0.999) || q.c !== undefined)
 
 export function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke, tint: string | null, alpha: number) {
   if (!s.pts.length) return

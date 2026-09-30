@@ -5,6 +5,8 @@ export interface Pt {
   p: number
   /** 0..1 per-point strength (opacity), defaults to 1 */
   s?: number
+  /** per-point vertex colour (tint brush), defaults to the stroke colour */
+  c?: string
 }
 
 export interface Stroke {
@@ -81,8 +83,9 @@ export type ToolId =
   | 'push'
   | 'twist'
   | 'pinch'
+  | 'tint'
 
-export const SCULPT_TOOLS: ToolId[] = ['smooth', 'thickness', 'strength', 'randomize', 'grab', 'push', 'twist', 'pinch']
+export const SCULPT_TOOLS: ToolId[] = ['smooth', 'thickness', 'strength', 'randomize', 'grab', 'push', 'twist', 'pinch', 'tint']
 export const isSculpt = (t: ToolId) => SCULPT_TOOLS.includes(t)
 
 export const uid = () => Math.random().toString(36).slice(2, 10)

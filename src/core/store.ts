@@ -55,6 +55,8 @@ interface State {
   sculpt: { radius: number; strength: number; maskSelected: boolean }
   fill: FillOptions
   onion: OnionCfg
+  /** Blender's multiframe editing: brush/transform edits hit neighbouring keys too */
+  multiframe: { enabled: boolean; before: number; after: number; falloff: boolean }
   view: { zoom: number; x: number; y: number }
   selection: string[]
   past: Doc[]
@@ -74,6 +76,7 @@ interface State {
   setSculpt: (s: Partial<State['sculpt']>) => void
   setFill: (f: Partial<FillOptions>) => void
   setOnion: (o: Partial<OnionCfg>) => void
+  setMultiframe: (m: Partial<State['multiframe']>) => void
   setView: (v: Partial<State['view']>) => void
   setActiveLayer: (id: string) => void
   setSelection: (ids: string[]) => void
@@ -84,6 +87,10 @@ interface State {
   ensureKey: () => Keyframe
   addStroke: (s: Stroke) => void
   replaceStrokes: (strokes: Stroke[]) => void
+  /** write a specific key (used by multiframe editing) */
+  replaceStrokesAt: (edits: { frame: number; strokes: Stroke[] }[]) => void
+  /** frames of the keys a multiframe edit should touch, current frame first */
+  editFrames: () => number[]
   /** Blender's Interpolate Sequence between the surrounding keys */
   interpolate: (easing: Easing, step: number) => number
   /** stroke operators applied to the selection (or everything if empty) */
@@ -101,6 +108,7 @@ export const useStore = create<State>((set, get) => ({
   eraser: { radius: 18, whole: false },
   sculpt: { radius: 60, strength: 0.5, maskSelected: false },
   fill: { ...defaultFillOptions },
+  multiframe: { enabled: false, before: 1, after: 1, falloff: true },
   onion: { enabled: true, before: 2, after: 1, beforeColor: '#ff4d4d', afterColor: '#3aa0ff', opacity: 0.35 },
   view: { zoom: 1, x: 0, y: 0 },
   selection: [],
@@ -135,6 +143,7 @@ export const useStore = create<State>((set, get) => ({
   setSculpt: (v) => set((s) => ({ sculpt: { ...s.sculpt, ...v } })),
   setFill: (v) => set((s) => ({ fill: { ...s.fill, ...v } })),
   setOnion: (o) => set((s) => ({ onion: { ...s.onion, ...o } })),
+  setMultiframe: (m) => set((s) => ({ multiframe: { ...s.multiframe, ...m } })),
   setView: (v) => set((s) => ({ view: { ...s.view, ...v } })),
   setActiveLayer: (id) => set({ activeLayerId: id, selection: [] }),
   setSelection: (ids) => set({ selection: ids }),
@@ -197,6 +206,36 @@ export const useStore = create<State>((set, get) => ({
       k.strokes = strokes
     })
   },
+  replaceStrokesAt: (edits) => {
+    const layerId = get().activeLayer().id
+    get().commit((d) => {
+      const l = d.layers.find((x) => x.id === layerId)!
+      for (const e of edits) {
+        let k = l.keys.find((kk) => kk.frame === e.frame)
+        if (!k) {
+          k = { frame: e.frame, strokes: [] }
+          l.keys.push(k)
+        }
+        k.strokes = e.strokes
+      }
+      l.keys.sort((a, b) => a.frame - b.frame)
+    })
+  },
+
+  editFrames: () => {
+    const st = get()
+    const layer = st.activeLayer()
+    const ki = keyIndexAt(layer, st.frame)
+    const curFrame = ki >= 0 ? layer.keys[ki].frame : st.frame
+    if (!st.multiframe.enabled) return [curFrame]
+    const sorted = [...layer.keys].sort((a, b) => a.frame - b.frame)
+    const ci = sorted.findIndex((k) => k.frame === curFrame)
+    const out = [curFrame]
+    for (let i = 1; i <= st.multiframe.before; i++) if (sorted[ci - i]) out.push(sorted[ci - i].frame)
+    for (let i = 1; i <= st.multiframe.after; i++) if (sorted[ci + i]) out.push(sorted[ci + i].frame)
+    return out
+  },
+
   interpolate: (easing, step) => {
     let made = 0
     const layerId = get().activeLayer().id
