@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useStore } from '../core/store'
-import { renderDoc, drawStroke, keyIndexAt } from '../core/render'
+import { renderDoc, drawStroke, keyIndexAt, layerMatrix } from '../core/render'
 import { distToStroke, resample, simplify, smoothPts, strokeBBox } from '../core/geometry'
 import { applyBrush } from '../core/sculpt'
 import { bucketFill } from '../core/fill'
@@ -44,10 +44,15 @@ export default function Stage() {
     const { zoom, x, y } = useStore.getState().view
     const doc = useStore.getState().doc
     const s = fitScale(r.width, r.height, doc.width, doc.height) * zoom
-    return {
-      x: (e.clientX - r.left - (r.width / 2 + x)) / s + doc.width / 2,
-      y: (e.clientY - r.top - (r.height / 2 + y)) / s + doc.height / 2,
+    const px = (e.clientX - r.left - (r.width / 2 + x)) / s + doc.width / 2
+    const py = (e.clientY - r.top - (r.height / 2 + y)) / s + doc.height / 2
+    // undo the active layer's transform so drawing lands where the cursor is
+    const layer = useStore.getState().activeLayer()
+    if (layer?.transform || layer?.parent) {
+      const p = layerMatrix(doc, layer).inverse().transformPoint(new DOMPoint(px, py))
+      return { x: p.x, y: p.y }
     }
+    return { x: px, y: py }
   }
 
   const currentStrokes = (): Stroke[] => {

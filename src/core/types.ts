@@ -25,6 +25,14 @@ export interface Keyframe {
   strokes: Stroke[]
 }
 
+export interface LayerTransform {
+  x: number
+  y: number
+  /** degrees */
+  rot: number
+  scale: number
+}
+
 export interface Layer {
   id: string
   name: string
@@ -36,6 +44,15 @@ export interface Layer {
   onion: boolean
   /** canvas composite mode, mirrors Blender's layer blend */
   blend?: 'normal' | 'multiply' | 'screen' | 'overlay' | 'lighten' | 'darken' | 'difference'
+  /** non-destructive modifier stack */
+  modifiers?: import('./modifiers').Modifier[]
+  /** layer transform, inherited down the parent chain */
+  transform?: LayerTransform
+  /** id of the layer this one is parented to */
+  parent?: string | null
+  /** id of the layer used as an alpha mask */
+  maskWith?: string | null
+  maskInvert?: boolean
   keys: Keyframe[]
 }
 

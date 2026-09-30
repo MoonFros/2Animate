@@ -1,5 +1,6 @@
 import type { Doc, Layer, Stroke } from './types'
 import { spline } from './geometry'
+import { applyModifiers } from './modifiers'
 
 /** Build the two-sided outline of a variable-width stroke and fill it. */
 export function strokePath(ctx: CanvasRenderingContext2D, s: Stroke) {
@@ -147,29 +148,107 @@ export function renderDoc(
     ctx.fillStyle = doc.bg
     ctx.fillRect(0, 0, doc.width, doc.height)
   }
-
   for (const layer of doc.layers) {
     if (!layer.visible) continue
     ctx.save()
-    ctx.globalCompositeOperation = (layer.blend ?? 'normal') === 'normal' ? 'source-over' : (layer.blend as GlobalCompositeOperation)
-
-    if (onion.enabled && layer.onion && layer.id === activeLayerId) {
-      const sorted = [...layer.keys].sort((a, b) => a.frame - b.frame)
-      const ci = sorted.findIndex((k) => k.frame === (keyAt(layer, frame)?.frame ?? -1))
-      for (let o = 1; o <= onion.before; o++) {
-        const k = sorted[ci - o]
-        if (!k) break
-        drawStrokes(ctx, k.strokes, onion.beforeColor, (onion.opacity * (1 - (o - 1) / (onion.before + 1))) * layer.opacity)
-      }
-      for (let o = 1; o <= onion.after; o++) {
-        const k = sorted[ci + o]
-        if (!k) break
-        drawStrokes(ctx, k.strokes, onion.afterColor, (onion.opacity * (1 - (o - 1) / (onion.after + 1))) * layer.opacity)
-      }
-    }
-
-    const k = keyAt(layer, frame)
-    if (k) drawStrokes(ctx, k.strokes, layer.tint, layer.opacity)
+    ctx.globalCompositeOperation =
+      (layer.blend ?? 'normal') === 'normal' ? 'source-over' : (layer.blend as GlobalCompositeOperation)
+    applyLayerMatrix(ctx, doc, layer)
+    if (layer.maskWith) drawMaskedLayer(ctx, doc, layer, frame, onion, activeLayerId)
+    else drawLayer(ctx, doc, layer, frame, onion, activeLayerId)
     ctx.restore()
   }
+}
+
+/** Layer transform, walking up the parent chain first (Blender-style parenting). */
+export function applyLayerMatrix(ctx: CanvasRenderingContext2D, doc: Doc, layer: Layer, depth = 0) {
+  if (depth > 8) return
+  if (layer.parent) {
+    const p = doc.layers.find((l) => l.id === layer.parent)
+    if (p && p.id !== layer.id) applyLayerMatrix(ctx, doc, p, depth + 1)
+  }
+  const t = layer.transform
+  if (!t || (t.x === 0 && t.y === 0 && t.rot === 0 && t.scale === 1)) return
+  ctx.translate(doc.width / 2 + t.x, doc.height / 2 + t.y)
+  ctx.rotate((t.rot * Math.PI) / 180)
+  ctx.scale(t.scale, t.scale)
+  ctx.translate(-doc.width / 2, -doc.height / 2)
+}
+
+/** Same transform as applyLayerMatrix, as a matrix — used to un-project pointer input. */
+export function layerMatrix(doc: Doc, layer: Layer, depth = 0): DOMMatrix {
+  let m = new DOMMatrix()
+  if (depth <= 8 && layer.parent) {
+    const p = doc.layers.find((l) => l.id === layer.parent)
+    if (p && p.id !== layer.id) m = layerMatrix(doc, p, depth + 1)
+  }
+  const t = layer.transform
+  if (t && !(t.x === 0 && t.y === 0 && t.rot === 0 && t.scale === 1)) {
+    m = m.translate(doc.width / 2 + t.x, doc.height / 2 + t.y).rotate(t.rot).scale(t.scale).translate(-doc.width / 2, -doc.height / 2)
+  }
+  return m
+}
+
+function drawLayer(
+  ctx: CanvasRenderingContext2D,
+  doc: Doc,
+  layer: Layer,
+  frame: number,
+  onion: OnionCfg,
+  activeLayerId: string | null,
+) {
+  if (onion.enabled && layer.onion && layer.id === activeLayerId) {
+    const sorted = [...layer.keys].sort((a, b) => a.frame - b.frame)
+    const curFrame = keyAt(layer, frame)?.frame ?? -1
+    const ci = sorted.findIndex((k) => k.frame === curFrame)
+    for (let o = 1; o <= onion.before; o++) {
+      const k = sorted[ci - o]
+      if (!k) break
+      drawStrokes(ctx, applyModifiers(k.strokes, layer, k.frame), onion.beforeColor, onion.opacity * (1 - (o - 1) / (onion.before + 1)) * layer.opacity)
+    }
+    for (let o = 1; o <= onion.after; o++) {
+      const k = sorted[ci + o]
+      if (!k) break
+      drawStrokes(ctx, applyModifiers(k.strokes, layer, k.frame), onion.afterColor, onion.opacity * (1 - (o - 1) / (onion.after + 1)) * layer.opacity)
+    }
+  }
+  const k = keyAt(layer, frame)
+  if (k) drawStrokes(ctx, applyModifiers(k.strokes, layer, frame), layer.tint, layer.opacity)
+}
+
+let maskCanvas: HTMLCanvasElement | null = null
+
+function drawMaskedLayer(
+  ctx: CanvasRenderingContext2D,
+  doc: Doc,
+  layer: Layer,
+  frame: number,
+  onion: OnionCfg,
+  activeLayerId: string | null,
+) {
+  const mask = doc.layers.find((l) => l.id === layer.maskWith)
+  if (!mask) return drawLayer(ctx, doc, layer, frame, onion, activeLayerId)
+  if (!maskCanvas) maskCanvas = document.createElement('canvas')
+  const c = maskCanvas
+  if (c.width !== doc.width || c.height !== doc.height) {
+    c.width = doc.width
+    c.height = doc.height
+  }
+  const mctx = c.getContext('2d')!
+  mctx.setTransform(1, 0, 0, 1, 0, 0)
+  mctx.clearRect(0, 0, doc.width, doc.height)
+  drawLayer(mctx, doc, layer, frame, onion, activeLayerId)
+  mctx.globalCompositeOperation = layer.maskInvert ? 'destination-out' : 'destination-in'
+  const mk = keyAt(mask, frame)
+  if (mk) {
+    mctx.save()
+    applyLayerMatrix(mctx, doc, mask)
+    drawStrokes(mctx, applyModifiers(mk.strokes, mask, frame), '#000000', 1)
+    mctx.restore()
+  } else if (!layer.maskInvert) {
+    mctx.globalCompositeOperation = 'source-over'
+    mctx.clearRect(0, 0, doc.width, doc.height)
+  }
+  mctx.globalCompositeOperation = 'source-over'
+  ctx.drawImage(c, 0, 0)
 }
