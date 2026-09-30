@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { traceImage, defaultTraceOptions, type TraceOptions } from '../core/vectorize'
 import type { Stroke } from '../core/types'
 import { useStore } from '../core/store'
@@ -7,6 +7,26 @@ import { uid } from '../core/types'
 interface Loaded {
   name: string
   img: HTMLImageElement
+}
+
+interface Crop {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+const FULL: Crop = { x: 0, y: 0, w: 1, h: 1 }
+
+function cropCanvas(img: HTMLImageElement, c: Crop) {
+  const sx = Math.round(c.x * img.naturalWidth)
+  const sy = Math.round(c.y * img.naturalHeight)
+  const sw = Math.max(8, Math.round(c.w * img.naturalWidth))
+  const sh = Math.max(8, Math.round(c.h * img.naturalHeight))
+  const cv = document.createElement('canvas')
+  cv.width = sw
+  cv.height = sh
+  cv.getContext('2d')!.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh)
+  return cv
 }
 
 function fitStrokes(strokes: Stroke[], sw: number, sh: number, dw: number, dh: number): Stroke[] {
@@ -25,64 +45,73 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
   const [files, setFiles] = useState<Loaded[]>([])
   const [active, setActive] = useState(0)
   const [opts, setOpts] = useState<TraceOptions>(defaultTraceOptions)
+  const [crop, setCrop] = useState<Crop>(FULL)
+  const [tab, setTab] = useState<'vector' | 'source' | 'mask'>('vector')
   const [busy, setBusy] = useState('')
   const [preview, setPreview] = useState<{ strokes: Stroke[]; w: number; h: number } | null>(null)
-  const [spacing, setSpacing] = useState(2)
-  const [showMask, setShowMask] = useState(false)
   const [maskUrl, setMaskUrl] = useState('')
+  const [spacing, setSpacing] = useState(2)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const cropRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<{ x: number; y: number } | null>(null)
 
   const doc = useStore((s) => s.doc)
   const commit = useStore((s) => s.commit)
   const frame = useStore((s) => s.frame)
   const activeLayerId = useStore((s) => s.activeLayerId)
 
-  const load = async (list: FileList | null) => {
-    if (!list?.length) return
+  const cur = files[active]
+
+  const loadImages = async (srcs: { name: string; url: string }[]) => {
     const out: Loaded[] = []
-    for (const f of Array.from(list)) {
-      const url = URL.createObjectURL(f)
+    for (const s of srcs) {
       const img = new Image()
+      img.crossOrigin = 'anonymous'
       await new Promise((res, rej) => {
         img.onload = res
         img.onerror = rej
-        img.src = url
+        img.src = s.url
       })
-      out.push({ name: f.name, img })
+      out.push({ name: s.name, img })
     }
     out.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
     setFiles(out)
     setActive(0)
+    setCrop(FULL)
   }
 
-  // retrace the visible image whenever settings change
+  const onFiles = (list: FileList | null) => {
+    if (!list?.length) return
+    loadImages(Array.from(list).map((f) => ({ name: f.name, url: URL.createObjectURL(f) })))
+  }
+
+  /* --------------------------------------------------------- tracing */
   useEffect(() => {
-    const f = files[active]
-    if (!f) {
+    if (!cur) {
       setPreview(null)
       return
     }
     let cancelled = false
     setBusy('tracing…')
     const t = setTimeout(() => {
-      const res = traceImage(f.img, f.img.naturalWidth, f.img.naturalHeight, opts)
+      const src = cropCanvas(cur.img, crop)
+      const res = traceImage(src, src.width, src.height, opts)
       if (cancelled) return
       setPreview({ strokes: res.strokes, w: res.width, h: res.height })
       setMaskUrl(res.maskUrl)
       setBusy('')
-    }, 60)
+    }, 80)
     return () => {
       cancelled = true
       clearTimeout(t)
     }
-  }, [files, active, opts])
+  }, [cur, crop, opts])
 
-  // draw preview
   useEffect(() => {
     const c = canvasRef.current
-    if (!c || !preview) return
-    const W = 460
-    const H = Math.round((W * preview.h) / preview.w)
+    if (!c || !preview || tab !== 'vector') return
+    const W = 520
+    const H = Math.max(1, Math.round((W * preview.h) / preview.w))
     c.width = W
     c.height = H
     const ctx = c.getContext('2d')!
@@ -95,22 +124,54 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
     ctx.lineJoin = 'round'
     for (const st of preview.strokes) {
       ctx.strokeStyle = st.color
-      ctx.lineWidth = st.width
       ctx.beginPath()
-      st.pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)))
-      ctx.stroke()
+      for (let i = 1; i < st.pts.length; i++) {
+        const a = st.pts[i - 1]
+        const b = st.pts[i]
+        ctx.beginPath()
+        ctx.lineWidth = Math.max(0.3, st.width * ((a.p + b.p) / 2))
+        ctx.moveTo(a.x, a.y)
+        ctx.lineTo(b.x, b.y)
+        ctx.stroke()
+      }
     }
     ctx.restore()
-  }, [preview])
+  }, [preview, tab])
 
+  /* ------------------------------------------------------ crop drag */
+  const cropPos = (e: React.PointerEvent) => {
+    const r = cropRef.current!.getBoundingClientRect()
+    return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) }
+  }
+  const cropDown = (e: React.PointerEvent) => {
+    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+    dragRef.current = cropPos(e)
+  }
+  const cropMove = (e: React.PointerEvent) => {
+    if (!dragRef.current) return
+    const p = cropPos(e)
+    const a = dragRef.current
+    setCrop({ x: Math.min(a.x, p.x), y: Math.min(a.y, p.y), w: Math.abs(p.x - a.x), h: Math.abs(p.y - a.y) })
+  }
+  const cropUp = () => {
+    dragRef.current = null
+    setCrop((c) => (c.w < 0.05 || c.h < 0.05 ? FULL : c))
+  }
+
+  const cropStyle = useMemo(
+    () => ({ left: `${crop.x * 100}%`, top: `${crop.y * 100}%`, width: `${crop.w * 100}%`, height: `${crop.h * 100}%` }),
+    [crop],
+  )
+
+  /* ---------------------------------------------------------- place */
   const place = async (asSequence: boolean) => {
     if (!files.length) return
     setBusy('placing…')
     const batch: { frame: number; strokes: Stroke[] }[] = []
-    const targets = asSequence ? files : [files[active]]
+    const targets = asSequence ? files : [cur]
     for (let i = 0; i < targets.length; i++) {
-      const f = targets[i]
-      const res = traceImage(f.img, f.img.naturalWidth, f.img.naturalHeight, opts)
+      const src = cropCanvas(targets[i].img, crop)
+      const res = traceImage(src, src.width, src.height, opts)
       batch.push({
         frame: frame + (asSequence ? i * Math.max(1, spacing) : 0),
         strokes: fitStrokes(res.strokes, res.width, res.height, doc.width, doc.height),
@@ -146,14 +207,19 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
         <div className="modal-body">
           <div className="import-left">
             <label className="drop">
-              <input type="file" accept="image/*" multiple onChange={(e) => load(e.target.files)} />
+              <input type="file" accept="image/*" multiple onChange={(e) => onFiles(e.target.files)} />
               <span>📷 Choose photos / scans</span>
-              <small>Pick several at once to import a whole flipbook as a sequence</small>
+              <small>Pick several at once to import a whole flipbook</small>
             </label>
-            <label className="drop cam">
-              <input type="file" accept="image/*" capture="environment" onChange={(e) => load(e.target.files)} />
-              <span>Use phone camera</span>
-            </label>
+            <div className="hgroup">
+              <label className="drop cam" style={{ flex: 1 }}>
+                <input type="file" accept="image/*" capture="environment" onChange={(e) => onFiles(e.target.files)} />
+                <span>Phone camera</span>
+              </label>
+              <button style={{ flex: 1 }} onClick={() => loadImages([{ name: 'sample', url: '/samples/paper-01.jpg' }])}>
+                Load sample
+              </button>
+            </div>
 
             {files.length > 1 && (
               <div className="thumbs">
@@ -184,7 +250,7 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
               </div>
               <div className="row">
                 <label>Despeckle</label>
-                <input type="range" min={0} max={120} step={1} value={opts.minArea} onChange={(e) => setOpts({ ...opts, minArea: +e.target.value })} />
+                <input type="range" min={0} max={200} step={2} value={opts.minArea} onChange={(e) => setOpts({ ...opts, minArea: +e.target.value })} />
                 <span className="num">{opts.minArea}</span>
               </div>
               <div className="row">
@@ -215,17 +281,33 @@ export default function ImportPanel({ onClose }: { onClose: () => void }) {
 
           <div className="import-right">
             <div className="preview-head">
+              <div className="tabs">
+                <button className={tab === 'vector' ? 'on' : ''} onClick={() => setTab('vector')}>Vector</button>
+                <button className={tab === 'source' ? 'on' : ''} onClick={() => setTab('source')}>Crop</button>
+                <button className={tab === 'mask' ? 'on' : ''} onClick={() => setTab('mask')}>Ink mask</button>
+              </div>
               <span>{busy || `${preview?.strokes.length ?? 0} strokes`}</span>
-              <label className="check">
-                <input type="checkbox" checked={showMask} onChange={(e) => setShowMask(e.target.checked)} /> show ink mask
-              </label>
             </div>
+
             <div className="preview">
-              {showMask && maskUrl ? <img src={maskUrl} alt="mask" /> : <canvas ref={canvasRef} />}
+              {!cur && <span className="hint" style={{ padding: 30 }}>Pick a photo to start — or hit “Load sample”.</span>}
+              {cur && tab === 'source' && (
+                <div className="cropwrap" ref={cropRef} onPointerDown={cropDown} onPointerMove={cropMove} onPointerUp={cropUp}>
+                  <img src={cur.img.src} alt="source" draggable={false} />
+                  <div className="cropbox" style={cropStyle} />
+                </div>
+              )}
+              {cur && tab === 'mask' && maskUrl && <img src={maskUrl} alt="ink mask" />}
+              {cur && tab === 'vector' && <canvas ref={canvasRef} />}
             </div>
-            <p className="hint">
-              Flat, even light and a dark pen give the cleanest trace. Push <b>Threshold</b> up if paper texture comes through, down if lines break up.
-            </p>
+
+            <div className="preview-foot">
+              {tab === 'source' ? (
+                <p className="hint">Drag a box around just the paper — anything outside (desk, hands, shadows) is ignored. <button className="mini-btn" onClick={() => setCrop(FULL)}>reset crop</button></p>
+              ) : (
+                <p className="hint">Flat light + dark pen = cleanest trace. Raise <b>Threshold</b> if paper texture shows up, lower it if lines break apart.</p>
+              )}
+            </div>
           </div>
         </div>
 
