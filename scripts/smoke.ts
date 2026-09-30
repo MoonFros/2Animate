@@ -26,3 +26,17 @@ applyBrush([s2], { tool: 'strength', x: 50, y: 0, dx: 0, dy: 0, radius: 60, stre
 console.log('strength lowered?', (s2.pts[10].s ?? 1) < 1)
 applyBrush([s2], { tool: 'pinch', x: 50, y: 0, dx: 0, dy: 0, radius: 60, strength: 1, invert: false, mask: null })
 console.log('ok')
+
+/* modifiers */
+import { applyModifiers, defaultModifier } from '../src/core/modifiers'
+import type { Layer } from '../src/core/types'
+const layer = (mods: any[]): Layer => ({ id: 'L', name: 'L', visible: true, locked: false, opacity: 1, tint: null, onion: true, modifiers: mods, keys: [] })
+const src = [mk(Array.from({ length: 12 }, (_, i) => [i * 10, 0]), 'm1'), mk(Array.from({ length: 12 }, (_, i) => [i * 10, 50]), 'm2')]
+for (const kind of ['noise', 'offset', 'thickness', 'tint', 'simplify'] as const) {
+  const r = applyModifiers(src, layer([defaultModifier(kind)]), 5)
+  console.log('mod', kind, 'strokes', r.length, 'pts', r[0].pts.length, 'colour', r[0].color)
+}
+const bm = defaultModifier("build")
+bm.length = 10
+console.log('build @0', applyModifiers(src, layer([bm]), 0).length, '@5', applyModifiers(src, layer([bm]), 5).reduce((a, s) => a + s.pts.length, 0), '@20', applyModifiers(src, layer([bm]), 20).reduce((a, s) => a + s.pts.length, 0))
+console.log('no-mod fast path identical:', applyModifiers(src, layer([]), 0) === src)
