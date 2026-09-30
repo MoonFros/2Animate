@@ -20,18 +20,27 @@ Grease-Pencil-style tools — in the browser, no drawing tablet required.
   despeckle, line weight and ink colour controls
 - **Import many photos as a sequence** — shoot a flipbook, get keyframes N frames apart
 
-**Drawing & editing (Grease Pencil-ish)**
+**Drawing & editing (Grease Pencil parity, 2D)**
 - Draw tool with input stabiliser, pressure (stylus) and end taper
 - Straight line tool
+- **Fill / bucket** — rasterise, close leaks, flood fill, trace the region back out as a vector shape
 - Eraser — soft point erase (splits strokes) or whole-stroke delete
-- Sculpt brushes: **Smooth**, **Thickness** (Alt = thin), **Grab/push**
-- Select & move (click or box select), delete
+- **Full sculpt brush set**: Smooth, Thickness, Strength, Randomize, Grab, Push/smear, Twist,
+  Pinch/inflate — Alt inverts any of them, optional "affect selection only" masking
+- Edit mode: click / box select, Ctrl+A, and **Blender modal transforms** — `G` move, `R` rotate,
+  `S` scale, with `X`/`Y` axis locking, click or Enter to confirm, Esc to cancel
+- Stroke operators: smooth, simplify, subdivide, cyclic, reverse, flip H/V, to front / to back
 - Undo / redo, pan, zoom
 
 **Animation**
 - Layers: visibility, lock, opacity, tint, per-layer onion skin, reorder, duplicate
 - Dope-sheet timeline with keyframes, hold-until-next exposure, add / duplicate / delete key
 - Onion skin with before/after counts and red/blue tinting
+- **Interpolate Sequence** — automatic in-betweens between two keys, with linear / ease in /
+  ease out / ease in-out and "on ones / on twos" stepping. Strokes are paired by position,
+  length and colour, resampled to a common point count, and direction-matched so lines don't flip
+- Layer blend modes: normal, multiply, screen, overlay, lighten, darken, difference
+- Per-point strength (opacity) is part of the stroke model, so the Strength brush actually fades ink
 - Playback with fps and scene length control
 
 **Output**
@@ -47,10 +56,12 @@ Grease-Pencil-style tools — in the browser, no drawing tablet required.
 | D / B | draw |
 | L | straight line |
 | E | erase |
-| S | smooth |
-| T | thickness (Alt = thin) |
-| G | grab |
-| V | select |
+| F | fill |
+| V | select / edit mode |
+| S T U N G P W I | smooth, thickness, strength, randomize, grab, push, twist, pinch |
+| Alt (hold) | invert the active sculpt brush |
+| G / R / S | move / rotate / scale the selection (then X or Y to lock an axis) |
+| Ctrl+A | select all on the frame |
 | Space (hold) | pan |
 | O | toggle onion skin |
 | ← / → | step frame |
@@ -73,12 +84,14 @@ physics, Cycles/EEVEE rendering. The list below is the realistic path.
 
 ## Roadmap
 
-- [ ] Fill / bucket tool and closed-shape colouring
-- [ ] Frame interpolation between keys (Blender's Interpolate Sequence)
-- [ ] More sculpt brushes: pinch, twist, randomise, strength/tint
-- [ ] Transform on selection: rotate, scale, mirror, multiframe edit
+- [x] Fill / bucket tool and closed-shape colouring
+- [x] Frame interpolation between keys (Blender's Interpolate Sequence)
+- [x] Full sculpt brush set: smooth, thickness, strength, randomize, grab, push, twist, pinch
+- [x] Transform on selection: modal move / rotate / scale with axis locking, flip H/V
+- [ ] Multiframe editing (sculpt several keys at once)
 - [ ] Modifiers: noise, offset, thickness, build (draw-on animation)
-- [ ] Vertex/stroke colour palettes and materials
+- [ ] Vertex paint / tint brush, colour palettes and materials
+- [ ] Layer masks and parenting
 - [ ] Web Worker + WASM for tracing so big scans don't block the UI
 - [ ] GIF export, audio track for lip sync, camera moves
 - [ ] Autosave to IndexedDB and project browser
