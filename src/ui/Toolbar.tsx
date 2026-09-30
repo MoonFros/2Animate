@@ -53,7 +53,7 @@ export default function Toolbar() {
     <div className="toolbar">
       <div className="tool-group">
         <div className="group-label">Draw</div>
-        <div className="tools">
+        <div className="tools" data-tour="tools">
           {DRAW_TOOLS.map((t) => (
             <button key={t.id} className={'tool' + (tool === t.id ? ' active' : '')} onClick={() => setTool(t.id)} title={`${t.label} (${t.key})`}>
               {t.icon}
@@ -61,7 +61,7 @@ export default function Toolbar() {
           ))}
         </div>
         <div className="group-label">Sculpt</div>
-        <div className="tools">
+        <div className="tools" data-tour="sculpt">
           {SCULPT_LIST.map((t) => (
             <button key={t.id} className={'tool' + (tool === t.id ? ' active' : '')} onClick={() => setTool(t.id)} title={`${t.label} (${t.key}) — hold Alt to invert`}>
               {t.icon}

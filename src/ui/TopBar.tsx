@@ -3,7 +3,7 @@ import { useStore } from '../core/store'
 import { download, exportPNGSequence, exportSVG, exportVideo, renderFrameToCanvas } from '../core/exporters'
 import type { Doc } from '../core/types'
 
-export default function TopBar({ onImport }: { onImport: () => void }) {
+export default function TopBar({ onImport, onHelp }: { onImport: () => void; onHelp: () => void }) {
   const doc = useStore((s) => s.doc)
   const frame = useStore((s) => s.frame)
   const undo = useStore((s) => s.undo)
@@ -43,7 +43,7 @@ export default function TopBar({ onImport }: { onImport: () => void }) {
       <div className="brand">
         2<span>Animate</span>
       </div>
-      <button onClick={onImport} className="primary">📷 Import paper drawing</button>
+      <button onClick={onImport} className="primary" data-tour="import">📷 Import paper drawing</button>
       <span className="sep" />
       <button onClick={undo} title="Ctrl+Z">↶</button>
       <button onClick={redo} title="Ctrl+Shift+Z">↷</button>
@@ -68,7 +68,7 @@ export default function TopBar({ onImport }: { onImport: () => void }) {
           </label>
         </div>
       </div>
-      <div className="menu">
+      <div className="menu" data-tour="export">
         <button>Export ▾</button>
         <div className="drop-menu">
           <button onClick={() => download(new Blob([]), '')} style={{ display: 'none' }} />
@@ -84,6 +84,8 @@ export default function TopBar({ onImport }: { onImport: () => void }) {
           <button onClick={exportWebm}>Animation → WebM video</button>
         </div>
       </div>
+      <span className="sep" />
+      <button onClick={onHelp} title="Tutorial & shortcuts">? Help</button>
       {busy && <span className="busy">{busy}</span>}
       <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(e) => open(e.target.files?.[0])} />
     </div>

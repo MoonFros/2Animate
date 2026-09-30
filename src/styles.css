@@ -200,3 +200,39 @@ select { background: #1b1b1b; color: var(--text); border: 1px solid var(--line);
 .mod-head b { flex: 1; font-size: 12px; }
 .sw.add { background: #333; color: var(--dim); font-size: 13px; line-height: 1; }
 .hint.accent { color: var(--accent); }
+
+/* ---------------------------------------------------------------- tour */
+.tour { position: fixed; inset: 0; z-index: 200; pointer-events: none; }
+.tour-dim { position: absolute; inset: 0; background: rgba(0,0,0,0.62); }
+.tour-spot {
+  position: absolute; border-radius: 10px; border: 2px solid var(--accent);
+  box-shadow: 0 0 0 9999px rgba(0,0,0,0.62), 0 0 22px rgba(255,159,26,0.55);
+  transition: all 0.22s ease;
+}
+.tour-card {
+  position: absolute; pointer-events: auto; background: var(--panel);
+  border: 1px solid #4a4a4a; border-radius: 12px; padding: 14px 16px;
+  box-shadow: 0 18px 50px rgba(0,0,0,0.6); transition: left 0.22s ease, top 0.22s ease;
+}
+.tour-card h3 { margin: 0 0 8px; font-size: 15px; }
+.tour-body { font-size: 13px; line-height: 1.55; max-height: 44vh; overflow: auto; }
+.tour-body p { margin: 0 0 8px; }
+.tour-body ul { margin: 0 0 8px; padding-left: 18px; }
+.tour-body li { margin-bottom: 4px; }
+.tour-body .dim, .dim { color: var(--dim); }
+.tour-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; gap: 10px; }
+.dots { display: flex; gap: 5px; }
+.dots span { width: 7px; height: 7px; border-radius: 50%; background: #4d4d4d; cursor: pointer; }
+.dots span.on { background: var(--accent); }
+
+/* ---------------------------------------------------------------- help */
+.modal.help { width: min(760px, 94vw); }
+.help-body { display: block; }
+.guide { font-size: 13px; line-height: 1.6; }
+.guide h4 { margin: 4px 0 8px; font-size: 13px; color: var(--accent); }
+.guide ol, .guide ul { padding-left: 20px; margin: 0 0 12px; }
+.guide li { margin-bottom: 6px; }
+table.keys { width: 100%; border-collapse: collapse; }
+table.keys td { padding: 5px 6px; border-bottom: 1px solid #2f2f2f; }
+table.keys td:first-child { width: 220px; }
+kbd { background: #1b1b1b; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 2px 6px; font: 12px ui-monospace, monospace; }

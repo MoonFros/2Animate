@@ -34,7 +34,7 @@ export default function Layers() {
   )
 
   return (
-    <div className="panel layers">
+    <div className="panel layers" data-tour="layers">
       <div className="panel-head">
         <h3>Layers</h3>
         <div className="hgroup">

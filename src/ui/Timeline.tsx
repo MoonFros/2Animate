@@ -88,11 +88,14 @@ export default function Timeline() {
           />
         </label>
         <span className="sep" />
-        <button onClick={() => addKey(false)} title="New blank drawing on this frame">+ Key</button>
-        <button onClick={() => addKey(true)} title="Copy the current drawing onto this frame">⧉ Dup</button>
-        <button onClick={deleteKey} title="Delete the key on this frame">🗑 Key</button>
+        <span className="hgroup" data-tour="keys">
+          <button onClick={() => addKey(false)} title="New blank drawing on this frame">+ Key</button>
+          <button onClick={() => addKey(true)} title="Copy the current drawing onto this frame">⧉ Dup</button>
+          <button onClick={deleteKey} title="Delete the key on this frame">🗑 Key</button>
+        </span>
         <span className="sep" />
         <button
+          data-tour="interp"
           title="Interpolate Sequence — fill the gap between the surrounding keys with in-betweens"
           onClick={() => {
             const made = interpolate(easing, step)
@@ -115,7 +118,7 @@ export default function Timeline() {
         <input type="number" min={0} max={8} value={onion.before} onChange={(e) => setOnion({ before: +e.target.value })} className="tiny" title="Frames before" />
         <input type="number" min={0} max={8} value={onion.after} onChange={(e) => setOnion({ after: +e.target.value })} className="tiny" title="Frames after" />
         <span className="sep" />
-        <label className="check" title="Multiframe editing — brushes and transforms affect neighbouring keys too">
+        <label className="check" data-tour="multiframe" title="Multiframe editing — brushes and transforms affect neighbouring keys too">
           <input type="checkbox" checked={multiframe.enabled} onChange={(e) => setMultiframe({ enabled: e.target.checked })} /> Multiframe
         </label>
         <input className="tiny" type="number" min={0} max={8} value={multiframe.before} onChange={(e) => setMultiframe({ before: +e.target.value })} title="Keys before" />
