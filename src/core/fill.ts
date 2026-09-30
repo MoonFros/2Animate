@@ -21,9 +21,9 @@ export interface FillOptions {
 
 export const defaultFillOptions: FillOptions = { leak: 4, expand: 2, color: '#ffcc55', maxSize: 900, smooth: 0.4 }
 
-function dilate(mask: Uint8Array, w: number, h: number, r: number) {
+function dilate(mask: Uint8Array, w: number, h: number, r: number): Uint8Array {
   if (r <= 0) return mask
-  let cur = mask
+  let cur: Uint8Array = mask
   for (let step = 0; step < r; step++) {
     const next = new Uint8Array(cur.length)
     for (let y = 0; y < h; y++) {
@@ -112,7 +112,7 @@ export function bucketFill(
   for (const s of strokes) drawStroke(ctx, s, '#000000', 1)
 
   const img = ctx.getImageData(0, 0, w, h).data
-  let lines = new Uint8Array(w * h)
+  let lines: Uint8Array = new Uint8Array(w * h)
   for (let i = 0; i < w * h; i++) lines[i] = img[i * 4 + 3] > 40 ? 1 : 0
   lines = dilate(lines, w, h, Math.round(o.leak * scale))
 
