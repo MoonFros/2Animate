@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import { useStore } from '../core/store'
 import { keyIndexAt } from '../core/render'
+import type { Easing } from '../core/interpolate'
 
 export default function Timeline() {
   const doc = useStore((s) => s.doc)
@@ -12,6 +14,9 @@ export default function Timeline() {
   const commit = useStore((s) => s.commit)
   const onion = useStore((s) => s.onion)
   const setOnion = useStore((s) => s.setOnion)
+  const interpolate = useStore((s) => s.interpolate)
+  const [easing, setEasing] = useState<Easing>('linear')
+  const [step, setStep] = useState(1)
 
   const cell = 18
 
@@ -84,6 +89,23 @@ export default function Timeline() {
         <button onClick={() => addKey(false)} title="New blank drawing on this frame">+ Key</button>
         <button onClick={() => addKey(true)} title="Copy the current drawing onto this frame">⧉ Dup</button>
         <button onClick={deleteKey} title="Delete the key on this frame">🗑 Key</button>
+        <span className="sep" />
+        <button
+          title="Interpolate Sequence — fill the gap between the surrounding keys with in-betweens"
+          onClick={() => {
+            const made = interpolate(easing, step)
+            if (!made) alert('Put the playhead between two keyframes with at least one empty frame in between.')
+          }}
+        >
+          ⟿ Interpolate
+        </button>
+        <select value={easing} onChange={(e) => setEasing(e.target.value as Easing)} title="Easing">
+          <option value="linear">linear</option>
+          <option value="easeIn">ease in</option>
+          <option value="easeOut">ease out</option>
+          <option value="easeInOut">ease in-out</option>
+        </select>
+        <input className="tiny" type="number" min={1} max={8} value={step} onChange={(e) => setStep(Math.max(1, +e.target.value || 1))} title="Step: 1 = on ones, 2 = on twos" />
         <span className="sep" />
         <label className="check" title="Onion skin (O)">
           <input type="checkbox" checked={onion.enabled} onChange={(e) => setOnion({ enabled: e.target.checked })} /> Onion

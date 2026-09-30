@@ -114,6 +114,17 @@ export default function Layers() {
             <span className="num">{Math.round(doc.layers[idx].opacity * 100)}</span>
           </div>
           <div className="row">
+            <label>Blend</label>
+            <select
+              value={doc.layers[idx].blend ?? 'normal'}
+              onChange={(e) => commit((d) => void (d.layers[idx].blend = e.target.value as any))}
+            >
+              {['normal', 'multiply', 'screen', 'overlay', 'lighten', 'darken', 'difference'].map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+          </div>
+          <div className="row">
             <label>Tint</label>
             <input
               type="color"

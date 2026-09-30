@@ -1,48 +1,63 @@
 import { useEffect, useRef } from 'react'
 import { useStore } from '../core/store'
 import { renderDoc, drawStroke, keyIndexAt } from '../core/render'
-import { distToStroke, falloff, resample, simplify, smoothPts, strokeBBox } from '../core/geometry'
+import { distToStroke, resample, simplify, smoothPts, strokeBBox } from '../core/geometry'
+import { applyBrush } from '../core/sculpt'
+import { bucketFill } from '../core/fill'
 import type { Pt, Stroke } from '../core/types'
-import { uid } from '../core/types'
+import { isSculpt, uid } from '../core/types'
 
-type Mode = null | 'draw' | 'line' | 'erase' | 'sculpt' | 'grab' | 'move' | 'box' | 'pan'
+type Mode = null | 'draw' | 'line' | 'erase' | 'brush' | 'move' | 'box' | 'pan'
+type TMode = 'move' | 'rotate' | 'scale'
+
+interface Transform {
+  mode: TMode
+  pivot: { x: number; y: number }
+  start: { x: number; y: number }
+  snapshot: Stroke[]
+  axis: 'x' | 'y' | null
+}
 
 export default function Stage() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
 
-  // interaction state kept out of React for 60fps
   const live = useRef<{
     mode: Mode
-    pts: Pt[]
     stroke: Stroke | null
     work: Stroke[] | null
     last: { x: number; y: number } | null
-    start: { x: number; y: number } | null
     cursor: { x: number; y: number } | null
     panStart: { x: number; y: number; vx: number; vy: number } | null
-    alt: boolean
+    invert: boolean
     space: boolean
     box: { x0: number; y0: number; x1: number; y1: number } | null
-  }>({ mode: null, pts: [], stroke: null, work: null, last: null, start: null, cursor: null, panStart: null, alt: false, space: false, box: null })
+    xform: Transform | null
+  }>({ mode: null, stroke: null, work: null, last: null, cursor: null, panStart: null, invert: false, space: false, box: null, xform: null })
 
   /* ------------------------------------------------------------ helpers */
+  const fitScale = (cw: number, ch: number, dw: number, dh: number) => Math.min(cw / dw, ch / dh) * 0.92
+
   const toDoc = (e: { clientX: number; clientY: number }) => {
     const c = canvasRef.current!
     const r = c.getBoundingClientRect()
     const { zoom, x, y } = useStore.getState().view
     const doc = useStore.getState().doc
-    const fit = fitScale(r.width, r.height, doc.width, doc.height)
-    const s = fit * zoom
-    const cx = r.width / 2 + x
-    const cy = r.height / 2 + y
+    const s = fitScale(r.width, r.height, doc.width, doc.height) * zoom
     return {
-      x: (e.clientX - r.left - cx) / s + doc.width / 2,
-      y: (e.clientY - r.top - cy) / s + doc.height / 2,
+      x: (e.clientX - r.left - (r.width / 2 + x)) / s + doc.width / 2,
+      y: (e.clientY - r.top - (r.height / 2 + y)) / s + doc.height / 2,
     }
   }
 
-  const fitScale = (cw: number, ch: number, dw: number, dh: number) => Math.min(cw / dw, ch / dh) * 0.92
+  const currentStrokes = (): Stroke[] => {
+    const st = useStore.getState()
+    const layer = st.activeLayer()
+    const ki = keyIndexAt(layer, st.frame)
+    return ki >= 0 ? layer.keys[ki].strokes : []
+  }
+
+  const clone = (v: Stroke[]) => JSON.parse(JSON.stringify(v)) as Stroke[]
 
   /* ------------------------------------------------------------- render */
   useEffect(() => {
@@ -65,14 +80,12 @@ export default function Stage() {
         const doc = st.doc
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         ctx.clearRect(0, 0, w, h)
-        const fit = fitScale(w, h, doc.width, doc.height)
-        const s = fit * st.view.zoom
+        const s = fitScale(w, h, doc.width, doc.height) * st.view.zoom
         ctx.save()
         ctx.translate(w / 2 + st.view.x, h / 2 + st.view.y)
         ctx.scale(s, s)
         ctx.translate(-doc.width / 2, -doc.height / 2)
 
-        // paper shadow
         ctx.save()
         ctx.shadowColor = 'rgba(0,0,0,0.45)'
         ctx.shadowBlur = 24 / s
@@ -85,36 +98,60 @@ export default function Stage() {
         ctx.rect(0, 0, doc.width, doc.height)
         ctx.clip()
 
-        // live sculpt/erase edits override the stored keyframe
-        const workStrokes = live.current.work
-        if (workStrokes) {
+        const work = live.current.work
+        if (work) {
           const layer = st.activeLayer()
-          const docCopy = { ...doc, layers: doc.layers.map((l) => (l.id === layer.id ? { ...l, keys: l.keys.map((k) => (k.frame === (layer.keys[keyIndexAt(layer, st.frame)]?.frame ?? -1) ? { ...k, strokes: workStrokes } : k)) } : l)) }
+          const ki = keyIndexAt(layer, st.frame)
+          const targetFrame = ki >= 0 ? layer.keys[ki].frame : -1
+          const docCopy = {
+            ...doc,
+            layers: doc.layers.map((l) =>
+              l.id === layer.id ? { ...l, keys: l.keys.map((k) => (k.frame === targetFrame ? { ...k, strokes: work } : k)) } : l,
+            ),
+          }
           renderDoc(ctx, docCopy, st.frame, st.onion, st.activeLayerId, { background: false })
         } else {
           renderDoc(ctx, doc, st.frame, st.onion, st.activeLayerId, { background: false })
         }
 
-        // in-progress stroke
         if (live.current.stroke) drawStroke(ctx, live.current.stroke, null, 1)
 
-        // selection highlight
+        // selection outlines
         if (st.selection.length) {
-          const layer = st.activeLayer()
-          const ki = keyIndexAt(layer, st.frame)
-          const strokes = (workStrokes ?? (ki >= 0 ? layer.keys[ki].strokes : [])) || []
+          const strokes = work ?? currentStrokes()
           ctx.save()
           ctx.strokeStyle = '#ff9f1a'
           ctx.lineWidth = 1.5 / s
           ctx.setLineDash([6 / s, 4 / s])
+          let X0 = Infinity
+          let Y0 = Infinity
+          let X1 = -Infinity
+          let Y1 = -Infinity
           for (const sid of st.selection) {
             const stk = strokes.find((x) => x.id === sid)
             if (!stk) continue
             const b = strokeBBox(stk)
-            ctx.strokeRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0)
+            X0 = Math.min(X0, b.x0)
+            Y0 = Math.min(Y0, b.y0)
+            X1 = Math.max(X1, b.x1)
+            Y1 = Math.max(Y1, b.y1)
+          }
+          if (X0 < Infinity) {
+            ctx.strokeRect(X0, Y0, X1 - X0, Y1 - Y0)
+            ctx.setLineDash([])
+            ctx.fillStyle = '#ff9f1a'
+            const hs = 5 / s
+            for (const [hx, hy] of [
+              [X0, Y0],
+              [X1, Y0],
+              [X0, Y1],
+              [X1, Y1],
+            ])
+              ctx.fillRect(hx - hs, hy - hs, hs * 2, hs * 2)
           }
           ctx.restore()
         }
+
         if (live.current.box) {
           const b = live.current.box
           ctx.save()
@@ -122,6 +159,28 @@ export default function Stage() {
           ctx.setLineDash([5 / s, 3 / s])
           ctx.lineWidth = 1 / s
           ctx.strokeRect(Math.min(b.x0, b.x1), Math.min(b.y0, b.y1), Math.abs(b.x1 - b.x0), Math.abs(b.y1 - b.y0))
+          ctx.restore()
+        }
+
+        // transform guides
+        const xf = live.current.xform
+        if (xf && live.current.cursor) {
+          ctx.save()
+          ctx.strokeStyle = xf.axis === 'x' ? '#ff5555' : xf.axis === 'y' ? '#55ff77' : '#ffffff'
+          ctx.lineWidth = 1 / s
+          ctx.setLineDash([5 / s, 4 / s])
+          ctx.beginPath()
+          if (xf.axis === 'x') {
+            ctx.moveTo(-1e5, xf.pivot.y)
+            ctx.lineTo(1e5, xf.pivot.y)
+          } else if (xf.axis === 'y') {
+            ctx.moveTo(xf.pivot.x, -1e5)
+            ctx.lineTo(xf.pivot.x, 1e5)
+          } else {
+            ctx.moveTo(xf.pivot.x, xf.pivot.y)
+            ctx.lineTo(live.current.cursor.x, live.current.cursor.y)
+          }
+          ctx.stroke()
           ctx.restore()
         }
         ctx.restore()
@@ -133,7 +192,7 @@ export default function Stage() {
           let r = 0
           if (tool === 'draw' || tool === 'line') r = st.brush.width / 2
           else if (tool === 'erase') r = st.eraser.radius
-          else if (tool === 'smooth' || tool === 'thickness' || tool === 'grab') r = st.sculpt.radius
+          else if (isSculpt(tool)) r = st.sculpt.radius
           if (r > 0) {
             ctx.beginPath()
             ctx.arc(cur.x, cur.y, Math.max(2 / s, r), 0, Math.PI * 2)
@@ -165,8 +224,7 @@ export default function Stage() {
         while (acc >= step) {
           acc -= step
           const next = st.frame + 1
-          if (next >= st.doc.frameCount) useStore.getState().setFrame(st.loop ? 0 : st.doc.frameCount - 1)
-          else useStore.getState().setFrame(next)
+          useStore.getState().setFrame(next >= st.doc.frameCount ? (st.loop ? 0 : st.doc.frameCount - 1) : next)
         }
       } else acc = 0
       raf = requestAnimationFrame(tick)
@@ -175,17 +233,110 @@ export default function Stage() {
     return () => cancelAnimationFrame(raf)
   }, [])
 
+  /* ------------------------------------------------------- transform ops */
+  const beginTransform = (mode: TMode) => {
+    const st = useStore.getState()
+    if (!st.selection.length || !live.current.cursor) return
+    const strokes = currentStrokes()
+    let X0 = Infinity
+    let Y0 = Infinity
+    let X1 = -Infinity
+    let Y1 = -Infinity
+    for (const id of st.selection) {
+      const s = strokes.find((x) => x.id === id)
+      if (!s) continue
+      const b = strokeBBox(s)
+      X0 = Math.min(X0, b.x0)
+      Y0 = Math.min(Y0, b.y0)
+      X1 = Math.max(X1, b.x1)
+      Y1 = Math.max(Y1, b.y1)
+    }
+    if (X0 === Infinity) return
+    live.current.work = clone(strokes)
+    live.current.xform = {
+      mode,
+      pivot: { x: (X0 + X1) / 2, y: (Y0 + Y1) / 2 },
+      start: { ...live.current.cursor },
+      snapshot: clone(strokes),
+      axis: null,
+    }
+  }
+
+  const updateTransform = (p: { x: number; y: number }) => {
+    const xf = live.current.xform
+    const st = useStore.getState()
+    if (!xf || !live.current.work) return
+    const sel = st.selection
+    for (let i = 0; i < live.current.work.length; i++) {
+      const dst = live.current.work[i]
+      const src = xf.snapshot[i]
+      if (!src || !sel.includes(dst.id)) continue
+      for (let j = 0; j < dst.pts.length; j++) {
+        const a = src.pts[j]
+        let nx = a.x
+        let ny = a.y
+        if (xf.mode === 'move') {
+          const dx = xf.axis === 'y' ? 0 : p.x - xf.start.x
+          const dy = xf.axis === 'x' ? 0 : p.y - xf.start.y
+          nx += dx
+          ny += dy
+        } else if (xf.mode === 'rotate') {
+          const a0 = Math.atan2(xf.start.y - xf.pivot.y, xf.start.x - xf.pivot.x)
+          const a1 = Math.atan2(p.y - xf.pivot.y, p.x - xf.pivot.x)
+          const ang = a1 - a0
+          const ox = a.x - xf.pivot.x
+          const oy = a.y - xf.pivot.y
+          nx = xf.pivot.x + ox * Math.cos(ang) - oy * Math.sin(ang)
+          ny = xf.pivot.y + ox * Math.sin(ang) + oy * Math.cos(ang)
+        } else {
+          const d0 = Math.hypot(xf.start.x - xf.pivot.x, xf.start.y - xf.pivot.y) || 1
+          const d1 = Math.hypot(p.x - xf.pivot.x, p.y - xf.pivot.y)
+          const k = Math.max(0.02, d1 / d0)
+          const kx = xf.axis === 'y' ? 1 : k
+          const ky = xf.axis === 'x' ? 1 : k
+          nx = xf.pivot.x + (a.x - xf.pivot.x) * kx
+          ny = xf.pivot.y + (a.y - xf.pivot.y) * ky
+          dst.width = src.width * ((kx + ky) / 2)
+        }
+        dst.pts[j].x = nx
+        dst.pts[j].y = ny
+      }
+    }
+  }
+
+  const endTransform = (confirm: boolean) => {
+    const st = useStore.getState()
+    const xf = live.current.xform
+    if (!xf) return
+    live.current.xform = null
+    const work = live.current.work
+    live.current.work = null
+    if (confirm && work) st.replaceStrokes(work)
+  }
+
   /* -------------------------------------------------------- keyboard */
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
       const st = useStore.getState()
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return
+      const k = e.key.toLowerCase()
+
+      // modal transform first
+      if (live.current.xform) {
+        if (k === 'escape') return endTransform(false)
+        if (k === 'enter') return endTransform(true)
+        if (k === 'x') live.current.xform.axis = live.current.xform.axis === 'x' ? null : 'x'
+        if (k === 'y') live.current.xform.axis = live.current.xform.axis === 'y' ? null : 'y'
+        e.preventDefault()
+        return
+      }
+
       if (e.code === 'Space') {
         live.current.space = true
         e.preventDefault()
       }
-      if (e.altKey) live.current.alt = true
-      const k = e.key.toLowerCase()
+      if (e.altKey || e.ctrlKey) live.current.invert = true
+
       if ((e.ctrlKey || e.metaKey) && k === 'z') {
         e.preventDefault()
         e.shiftKey ? st.redo() : st.undo()
@@ -196,28 +347,51 @@ export default function Stage() {
         st.redo()
         return
       }
+      if ((e.ctrlKey || e.metaKey) && k === 'a') {
+        e.preventDefault()
+        st.setSelection(currentStrokes().map((s) => s.id))
+        st.setTool('select')
+        return
+      }
       if (e.ctrlKey || e.metaKey) return
-      const map: Record<string, any> = { d: 'draw', b: 'draw', e: 'erase', s: 'smooth', t: 'thickness', g: 'grab', v: 'select', l: 'line' }
+
+      // Blender-style modal transforms while something is selected
+      if (st.selection.length && (k === 'g' || k === 'r' || k === 's')) {
+        st.setTool('select')
+        beginTransform(k === 'g' ? 'move' : k === 'r' ? 'rotate' : 'scale')
+        e.preventDefault()
+        return
+      }
+
+      const map: Record<string, any> = {
+        d: 'draw',
+        b: 'draw',
+        l: 'line',
+        f: 'fill',
+        e: 'erase',
+        v: 'select',
+        s: 'smooth',
+        t: 'thickness',
+        u: 'strength',
+        n: 'randomize',
+        g: 'grab',
+        p: 'push',
+        w: 'twist',
+        i: 'pinch',
+      }
       if (map[k]) st.setTool(map[k])
       if (k === 'o') st.setOnion({ enabled: !st.onion.enabled })
       if (e.code === 'ArrowRight') st.setFrame(st.frame + 1)
       if (e.code === 'ArrowLeft') st.setFrame(st.frame - 1)
       if (e.code === 'Enter') st.setPlaying(!st.playing)
-      if (k === 'delete' || k === 'backspace') {
-        if (st.selection.length) {
-          const layer = st.activeLayer()
-          const ki = keyIndexAt(layer, st.frame)
-          if (ki >= 0) {
-            const keep = layer.keys[ki].strokes.filter((s) => !st.selection.includes(s.id))
-            st.replaceStrokes(keep)
-            st.setSelection([])
-          }
-        }
+      if ((k === 'delete' || k === 'backspace') && st.selection.length) {
+        st.replaceStrokes(currentStrokes().filter((s) => !st.selection.includes(s.id)))
+        st.setSelection([])
       }
     }
     const up = (e: KeyboardEvent) => {
       if (e.code === 'Space') live.current.space = false
-      if (!e.altKey) live.current.alt = false
+      if (!e.altKey && !e.ctrlKey) live.current.invert = false
     }
     window.addEventListener('keydown', down)
     window.addEventListener('keyup', up)
@@ -227,87 +401,7 @@ export default function Stage() {
     }
   }, [])
 
-  /* ------------------------------------------------------------ pointer */
-  const currentStrokes = (): Stroke[] => {
-    const st = useStore.getState()
-    const layer = st.activeLayer()
-    const ki = keyIndexAt(layer, st.frame)
-    return ki >= 0 ? layer.keys[ki].strokes : []
-  }
-
-  const onPointerDown = (e: React.PointerEvent) => {
-    const st = useStore.getState()
-    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-    const p = toDoc(e)
-    live.current.alt = e.altKey
-    live.current.start = p
-    live.current.last = p
-
-    const wantPan = st.tool === 'pan' || live.current.space || e.button === 1 || e.buttons === 4
-    if (wantPan) {
-      live.current.mode = 'pan'
-      live.current.panStart = { x: e.clientX, y: e.clientY, vx: st.view.x, vy: st.view.y }
-      return
-    }
-    if (st.activeLayer().locked) return
-
-    switch (st.tool) {
-      case 'draw':
-      case 'line': {
-        live.current.mode = st.tool
-        const pres = e.pressure && e.pressure > 0 && e.pointerType !== 'mouse' ? e.pressure : 0.75
-        live.current.pts = [{ ...p, p: pres }]
-        live.current.stroke = {
-          id: uid(),
-          pts: [{ ...p, p: pres }],
-          color: st.brush.color,
-          width: st.brush.width,
-          opacity: st.brush.opacity,
-          fill: null,
-        }
-        break
-      }
-      case 'erase':
-        live.current.mode = 'erase'
-        live.current.work = JSON.parse(JSON.stringify(currentStrokes()))
-        applyErase(p)
-        break
-      case 'smooth':
-      case 'thickness':
-        live.current.mode = 'sculpt'
-        live.current.work = JSON.parse(JSON.stringify(currentStrokes()))
-        applySculpt(p)
-        break
-      case 'grab':
-        live.current.mode = 'grab'
-        live.current.work = JSON.parse(JSON.stringify(currentStrokes()))
-        break
-      case 'select': {
-        const strokes = currentStrokes()
-        let hit: Stroke | null = null
-        let bestD = Infinity
-        for (const s of strokes) {
-          const d = distToStroke(s, p.x, p.y)
-          if (d < Math.max(8, s.width) && d < bestD) {
-            bestD = d
-            hit = s
-          }
-        }
-        if (hit) {
-          const sel = e.shiftKey ? [...new Set([...st.selection, hit.id])] : st.selection.includes(hit.id) ? st.selection : [hit.id]
-          st.setSelection(sel)
-          live.current.mode = 'move'
-          live.current.work = JSON.parse(JSON.stringify(strokes))
-        } else {
-          if (!e.shiftKey) st.setSelection([])
-          live.current.mode = 'box'
-          live.current.box = { x0: p.x, y0: p.y, x1: p.x, y1: p.y }
-        }
-        break
-      }
-    }
-  }
-
+  /* ------------------------------------------------------------ erasing */
   const applyErase = (p: { x: number; y: number }) => {
     const st = useStore.getState()
     const r = st.eraser.radius
@@ -323,60 +417,117 @@ export default function Stage() {
         out.push(s)
         continue
       }
-      // split the polyline where it enters the eraser disc
+      if (s.fill) {
+        // soft-erasing a filled shape just fades it, like GP's fill erase
+        out.push(s)
+        continue
+      }
       let run: Pt[] = []
+      let first = true
       for (const q of s.pts) {
         if (Math.hypot(q.x - p.x, q.y - p.y) <= r) {
-          if (run.length > 1) out.push({ ...s, id: uid(), pts: run })
+          if (run.length > 1) out.push({ ...s, id: first ? s.id : uid(), pts: run })
+          first = false
           run = []
         } else run.push(q)
       }
-      if (run.length > 1) out.push({ ...s, id: s.id, pts: run })
+      if (run.length > 1) out.push({ ...s, id: first ? s.id : uid(), pts: run })
     }
     live.current.work = out
   }
 
-  const applySculpt = (p: { x: number; y: number }) => {
+  /* ------------------------------------------------------------ pointer */
+  const onPointerDown = (e: React.PointerEvent) => {
     const st = useStore.getState()
-    const { radius, strength } = st.sculpt
-    const work = live.current.work
-    if (!work) return
-    const sign = live.current.alt ? -1 : 1
-    for (const s of work) {
-      const b = strokeBBox(s)
-      if (p.x < b.x0 - radius || p.x > b.x1 + radius || p.y < b.y0 - radius || p.y > b.y1 + radius) continue
-      const pts = s.pts
-      if (st.tool === 'smooth') {
-        const src = pts.map((q) => ({ ...q }))
-        for (let i = 1; i < pts.length - 1; i++) {
-          const w = falloff(Math.hypot(pts[i].x - p.x, pts[i].y - p.y), radius) * strength * 0.9
-          if (w <= 0) continue
-          const tx = (src[i - 1].x + src[i + 1].x) / 2
-          const ty = (src[i - 1].y + src[i + 1].y) / 2
-          pts[i].x += (tx - pts[i].x) * w
-          pts[i].y += (ty - pts[i].y) * w
-        }
-      } else if (st.tool === 'thickness') {
-        for (let i = 0; i < pts.length; i++) {
-          const w = falloff(Math.hypot(pts[i].x - p.x, pts[i].y - p.y), radius) * strength * 0.18 * sign
-          if (w === 0) continue
-          pts[i].p = Math.max(0.05, Math.min(4, pts[i].p * (1 + w)))
+    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+    const p = toDoc(e)
+    live.current.invert = e.altKey || e.ctrlKey
+    live.current.last = p
+    live.current.cursor = p
+
+    if (live.current.xform) {
+      endTransform(e.button !== 2)
+      return
+    }
+
+    const wantPan = st.tool === 'pan' || live.current.space || e.button === 1 || e.buttons === 4
+    if (wantPan) {
+      live.current.mode = 'pan'
+      live.current.panStart = { x: e.clientX, y: e.clientY, vx: st.view.x, vy: st.view.y }
+      return
+    }
+    if (st.activeLayer().locked) return
+
+    const tool = st.tool
+    if (tool === 'draw' || tool === 'line') {
+      live.current.mode = tool
+      const pres = e.pressure && e.pressure > 0 && e.pointerType !== 'mouse' ? e.pressure : 0.75
+      live.current.stroke = {
+        id: uid(),
+        pts: [{ ...p, p: pres, s: 1 }],
+        color: st.brush.color,
+        width: st.brush.width,
+        opacity: st.brush.opacity,
+        fill: null,
+      }
+      return
+    }
+    if (tool === 'fill') {
+      const visible: Stroke[] = []
+      for (const l of st.doc.layers) {
+        if (!l.visible) continue
+        const ki = keyIndexAt(l, st.frame)
+        if (ki >= 0) visible.push(...l.keys[ki].strokes)
+      }
+      const shape = bucketFill(visible, st.doc.width, st.doc.height, p.x, p.y, st.fill)
+      if (shape) {
+        // fills go underneath the line art
+        st.replaceStrokes([shape, ...currentStrokes()])
+      }
+      return
+    }
+    if (tool === 'erase') {
+      live.current.mode = 'erase'
+      live.current.work = clone(currentStrokes())
+      applyErase(p)
+      return
+    }
+    if (isSculpt(tool)) {
+      live.current.mode = 'brush'
+      live.current.work = clone(currentStrokes())
+      applyBrush(live.current.work, {
+        tool,
+        x: p.x,
+        y: p.y,
+        dx: 0,
+        dy: 0,
+        radius: st.sculpt.radius,
+        strength: st.sculpt.strength,
+        invert: live.current.invert,
+        mask: st.sculpt.maskSelected && st.selection.length ? st.selection : null,
+      })
+      return
+    }
+    if (tool === 'select') {
+      const strokes = currentStrokes()
+      let hit: Stroke | null = null
+      let bestD = Infinity
+      for (const s of strokes) {
+        const d = distToStroke(s, p.x, p.y)
+        if (d < Math.max(8, s.width) && d < bestD) {
+          bestD = d
+          hit = s
         }
       }
-    }
-  }
-
-  const applyGrab = (p: { x: number; y: number }, dx: number, dy: number) => {
-    const st = useStore.getState()
-    const { radius, strength } = st.sculpt
-    const work = live.current.work
-    if (!work) return
-    for (const s of work) {
-      for (const q of s.pts) {
-        const w = falloff(Math.hypot(q.x - p.x, q.y - p.y), radius) * strength
-        if (w <= 0) continue
-        q.x += dx * w
-        q.y += dy * w
+      if (hit) {
+        const sel = e.shiftKey ? [...new Set([...st.selection, hit.id])] : st.selection.includes(hit.id) ? st.selection : [hit.id]
+        st.setSelection(sel)
+        live.current.mode = 'move'
+        live.current.work = clone(strokes)
+      } else {
+        if (!e.shiftKey) st.setSelection([])
+        live.current.mode = 'box'
+        live.current.box = { x0: p.x, y0: p.y, x1: p.x, y1: p.y }
       }
     }
   }
@@ -384,63 +535,75 @@ export default function Stage() {
   const onPointerMove = (e: React.PointerEvent) => {
     const st = useStore.getState()
     const p = toDoc(e)
+    const last = live.current.last ?? p
     live.current.cursor = p
-    live.current.alt = e.altKey
-    const mode = live.current.mode
-    if (!mode) return
+    live.current.invert = e.altKey || e.ctrlKey
 
-    if (mode === 'pan') {
-      const ps = live.current.panStart!
-      st.setView({ x: ps.vx + (e.clientX - ps.x), y: ps.vy + (e.clientY - ps.y) })
-      return
-    }
-    if (mode === 'draw') {
-      const s = live.current.stroke!
-      const pres = e.pressure && e.pressure > 0 && e.pointerType !== 'mouse' ? e.pressure : 0.75
-      const last = s.pts[s.pts.length - 1]
-      const stab = st.brush.stabilize * 0.8
-      const np: Pt = { x: last.x + (p.x - last.x) * (1 - stab), y: last.y + (p.y - last.y) * (1 - stab), p: pres }
-      if (Math.hypot(np.x - last.x, np.y - last.y) > 0.6) s.pts.push(np)
-      return
-    }
-    if (mode === 'line') {
-      const s = live.current.stroke!
-      s.pts = [s.pts[0], { ...p, p: s.pts[0].p }]
-      return
-    }
-    if (mode === 'erase') {
-      applyErase(p)
-      return
-    }
-    if (mode === 'sculpt') {
-      applySculpt(p)
-      return
-    }
-    if (mode === 'grab') {
-      const last = live.current.last!
-      applyGrab(p, p.x - last.x, p.y - last.y)
+    if (live.current.xform) {
+      updateTransform(p)
       live.current.last = p
       return
     }
-    if (mode === 'move') {
-      const last = live.current.last!
-      const dx = p.x - last.x
-      const dy = p.y - last.y
-      const sel = st.selection
-      for (const s of live.current.work ?? []) {
-        if (!sel.includes(s.id)) continue
-        for (const q of s.pts) {
-          q.x += dx
-          q.y += dy
-        }
+
+    const mode = live.current.mode
+    if (!mode) {
+      live.current.last = p
+      return
+    }
+
+    switch (mode) {
+      case 'pan': {
+        const ps = live.current.panStart!
+        st.setView({ x: ps.vx + (e.clientX - ps.x), y: ps.vy + (e.clientY - ps.y) })
+        break
       }
-      live.current.last = p
-      return
+      case 'draw': {
+        const s = live.current.stroke!
+        const pres = e.pressure && e.pressure > 0 && e.pointerType !== 'mouse' ? e.pressure : 0.75
+        const lp = s.pts[s.pts.length - 1]
+        const stab = st.brush.stabilize * 0.8
+        const np: Pt = { x: lp.x + (p.x - lp.x) * (1 - stab), y: lp.y + (p.y - lp.y) * (1 - stab), p: pres, s: 1 }
+        if (Math.hypot(np.x - lp.x, np.y - lp.y) > 0.6) s.pts.push(np)
+        break
+      }
+      case 'line': {
+        const s = live.current.stroke!
+        s.pts = [s.pts[0], { ...p, p: s.pts[0].p, s: 1 }]
+        break
+      }
+      case 'erase':
+        applyErase(p)
+        break
+      case 'brush':
+        applyBrush(live.current.work!, {
+          tool: st.tool,
+          x: p.x,
+          y: p.y,
+          dx: p.x - last.x,
+          dy: p.y - last.y,
+          radius: st.sculpt.radius,
+          strength: st.sculpt.strength,
+          invert: live.current.invert,
+          mask: st.sculpt.maskSelected && st.selection.length ? st.selection : null,
+        })
+        break
+      case 'move': {
+        const dx = p.x - last.x
+        const dy = p.y - last.y
+        for (const s of live.current.work ?? []) {
+          if (!st.selection.includes(s.id)) continue
+          for (const q of s.pts) {
+            q.x += dx
+            q.y += dy
+          }
+        }
+        break
+      }
+      case 'box':
+        live.current.box = { ...live.current.box!, x1: p.x, y1: p.y }
+        break
     }
-    if (mode === 'box') {
-      live.current.box = { ...live.current.box!, x1: p.x, y1: p.y }
-      return
-    }
+    live.current.last = p
   }
 
   const onPointerUp = (e: React.PointerEvent) => {
@@ -452,9 +615,7 @@ export default function Stage() {
     if (mode === 'draw' || mode === 'line') {
       const s = live.current.stroke!
       live.current.stroke = null
-      if (s.pts.length < 2) {
-        s.pts.push({ ...s.pts[0], x: s.pts[0].x + 0.6, y: s.pts[0].y + 0.6, p: s.pts[0].p })
-      }
+      if (s.pts.length < 2) s.pts.push({ ...s.pts[0], x: s.pts[0].x + 0.6, y: s.pts[0].y + 0.6 })
       if (mode === 'draw') {
         s.pts = simplify(resample(s.pts, Math.max(1.5, s.width * 0.4)), 0.45)
         s.pts = smoothPts(s.pts, st.brush.stabilize * 0.6, 1)
@@ -490,8 +651,10 @@ export default function Stage() {
 
   const onWheel = (e: React.WheelEvent) => {
     const st = useStore.getState()
-    const f = Math.exp(-e.deltaY * 0.0015)
-    st.setView({ zoom: Math.max(0.15, Math.min(12, st.view.zoom * f)) })
+    if (e.ctrlKey || !e.shiftKey) {
+      const f = Math.exp(-e.deltaY * 0.0015)
+      st.setView({ zoom: Math.max(0.15, Math.min(12, st.view.zoom * f)) })
+    }
   }
 
   return (

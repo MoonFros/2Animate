@@ -3,6 +3,9 @@ import type { Doc, Keyframe, Layer, Stroke, ToolId } from './types'
 import { uid } from './types'
 import type { OnionCfg } from './render'
 import { keyIndexAt } from './render'
+import { defaultFillOptions, type FillOptions } from './fill'
+import { interpolateSequence, type Easing } from './interpolate'
+import { simplify, smoothPts } from './geometry'
 
 const clone = <T,>(v: T): T => (typeof structuredClone === 'function' ? structuredClone(v) : JSON.parse(JSON.stringify(v)))
 
@@ -49,7 +52,8 @@ interface State {
   tool: ToolId
   brush: Brush
   eraser: { radius: number; whole: boolean }
-  sculpt: { radius: number; strength: number }
+  sculpt: { radius: number; strength: number; maskSelected: boolean }
+  fill: FillOptions
   onion: OnionCfg
   view: { zoom: number; x: number; y: number }
   selection: string[]
@@ -68,6 +72,7 @@ interface State {
   setBrush: (b: Partial<Brush>) => void
   setEraser: (e: Partial<State['eraser']>) => void
   setSculpt: (s: Partial<State['sculpt']>) => void
+  setFill: (f: Partial<FillOptions>) => void
   setOnion: (o: Partial<OnionCfg>) => void
   setView: (v: Partial<State['view']>) => void
   setActiveLayer: (id: string) => void
@@ -79,6 +84,10 @@ interface State {
   ensureKey: () => Keyframe
   addStroke: (s: Stroke) => void
   replaceStrokes: (strokes: Stroke[]) => void
+  /** Blender's Interpolate Sequence between the surrounding keys */
+  interpolate: (easing: Easing, step: number) => number
+  /** stroke operators applied to the selection (or everything if empty) */
+  strokeOp: (op: 'simplify' | 'subdivide' | 'smooth' | 'cyclic' | 'reverse' | 'flipX' | 'flipY' | 'front' | 'back' | 'delete') => void
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -90,7 +99,8 @@ export const useStore = create<State>((set, get) => ({
   tool: 'draw',
   brush: { color: '#111111', width: 6, opacity: 1, stabilize: 0.45, taper: true },
   eraser: { radius: 18, whole: false },
-  sculpt: { radius: 60, strength: 0.5 },
+  sculpt: { radius: 60, strength: 0.5, maskSelected: false },
+  fill: { ...defaultFillOptions },
   onion: { enabled: true, before: 2, after: 1, beforeColor: '#ff4d4d', afterColor: '#3aa0ff', opacity: 0.35 },
   view: { zoom: 1, x: 0, y: 0 },
   selection: [],
@@ -123,6 +133,7 @@ export const useStore = create<State>((set, get) => ({
   setBrush: (b) => set((s) => ({ brush: { ...s.brush, ...b } })),
   setEraser: (e) => set((s) => ({ eraser: { ...s.eraser, ...e } })),
   setSculpt: (v) => set((s) => ({ sculpt: { ...s.sculpt, ...v } })),
+  setFill: (v) => set((s) => ({ fill: { ...s.fill, ...v } })),
   setOnion: (o) => set((s) => ({ onion: { ...s.onion, ...o } })),
   setView: (v) => set((s) => ({ view: { ...s.view, ...v } })),
   setActiveLayer: (id) => set({ activeLayerId: id, selection: [] }),
@@ -184,6 +195,89 @@ export const useStore = create<State>((set, get) => ({
         l.keys.sort((a, b) => a.frame - b.frame)
       }
       k.strokes = strokes
+    })
+  },
+  interpolate: (easing, step) => {
+    let made = 0
+    const layerId = get().activeLayer().id
+    const frame = get().frame
+    get().commit((d) => {
+      const l = d.layers.find((x) => x.id === layerId)!
+      made = interpolateSequence(l, frame, easing, step)
+    })
+    return made
+  },
+
+  strokeOp: (op) => {
+    const st = get()
+    const layer = st.activeLayer()
+    const ki = keyIndexAt(layer, st.frame)
+    if (ki < 0) return
+    const targetFrame = layer.keys[ki].frame
+    const sel = st.selection
+    const layerId = layer.id
+    get().commit((d) => {
+      const l = d.layers.find((x) => x.id === layerId)!
+      const k = l.keys.find((kk) => kk.frame === targetFrame)!
+      const hit = (s: Stroke) => sel.length === 0 || sel.includes(s.id)
+      if (op === 'delete') {
+        k.strokes = k.strokes.filter((s) => !hit(s))
+        return
+      }
+      if (op === 'front' || op === 'back') {
+        const moved = k.strokes.filter(hit)
+        const rest = k.strokes.filter((s) => !hit(s))
+        k.strokes = op === 'front' ? [...rest, ...moved] : [...moved, ...rest]
+        return
+      }
+      let cx = 0
+      let cy = 0
+      let n = 0
+      if (op === 'flipX' || op === 'flipY') {
+        for (const s of k.strokes) if (hit(s)) for (const q of s.pts) (cx += q.x), (cy += q.y), n++
+        cx /= Math.max(1, n)
+        cy /= Math.max(1, n)
+      }
+      for (const s of k.strokes) {
+        if (!hit(s)) continue
+        switch (op) {
+          case 'simplify':
+            s.pts = simplify(s.pts, Math.max(0.8, s.width * 0.35))
+            break
+          case 'smooth':
+            s.pts = smoothPts(s.pts, 0.6, 3)
+            break
+          case 'subdivide': {
+            const out: typeof s.pts = []
+            for (let i = 0; i < s.pts.length; i++) {
+              out.push(s.pts[i])
+              const b = s.pts[i + 1]
+              if (b)
+                out.push({
+                  x: (s.pts[i].x + b.x) / 2,
+                  y: (s.pts[i].y + b.y) / 2,
+                  p: (s.pts[i].p + b.p) / 2,
+                  s: ((s.pts[i].s ?? 1) + (b.s ?? 1)) / 2,
+                })
+            }
+            s.pts = out
+            break
+          }
+          case 'reverse':
+            s.pts = s.pts.slice().reverse()
+            break
+          case 'cyclic':
+            s.closed = !s.closed
+            if (s.closed) s.pts = [...s.pts, { ...s.pts[0] }]
+            break
+          case 'flipX':
+            for (const q of s.pts) q.x = 2 * cx - q.x
+            break
+          case 'flipY':
+            for (const q of s.pts) q.y = 2 * cy - q.y
+            break
+        }
+      }
     })
   },
 }))
