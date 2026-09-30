@@ -15,6 +15,8 @@ export default function Timeline() {
   const onion = useStore((s) => s.onion)
   const setOnion = useStore((s) => s.setOnion)
   const interpolate = useStore((s) => s.interpolate)
+  const multiframe = useStore((s) => s.multiframe)
+  const setMultiframe = useStore((s) => s.setMultiframe)
   const [easing, setEasing] = useState<Easing>('linear')
   const [step, setStep] = useState(1)
 
@@ -112,6 +114,15 @@ export default function Timeline() {
         </label>
         <input type="number" min={0} max={8} value={onion.before} onChange={(e) => setOnion({ before: +e.target.value })} className="tiny" title="Frames before" />
         <input type="number" min={0} max={8} value={onion.after} onChange={(e) => setOnion({ after: +e.target.value })} className="tiny" title="Frames after" />
+        <span className="sep" />
+        <label className="check" title="Multiframe editing — brushes and transforms affect neighbouring keys too">
+          <input type="checkbox" checked={multiframe.enabled} onChange={(e) => setMultiframe({ enabled: e.target.checked })} /> Multiframe
+        </label>
+        <input className="tiny" type="number" min={0} max={8} value={multiframe.before} onChange={(e) => setMultiframe({ before: +e.target.value })} title="Keys before" />
+        <input className="tiny" type="number" min={0} max={8} value={multiframe.after} onChange={(e) => setMultiframe({ after: +e.target.value })} title="Keys after" />
+        <label className="check" title="Weaker effect on further keys">
+          <input type="checkbox" checked={multiframe.falloff} onChange={(e) => setMultiframe({ falloff: e.target.checked })} /> falloff
+        </label>
       </div>
 
       <div className="tl-body">

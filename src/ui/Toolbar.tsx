@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useStore } from '../core/store'
 import { isSculpt, type ToolId } from '../core/types'
 
@@ -19,6 +20,7 @@ const SCULPT_LIST: { id: ToolId; label: string; icon: string; key: string }[] = 
   { id: 'push', label: 'Push / smear', icon: '👉', key: 'P' },
   { id: 'twist', label: 'Twist', icon: '🌀', key: 'W' },
   { id: 'pinch', label: 'Pinch / inflate', icon: '🤏', key: 'I' },
+  { id: 'tint', label: 'Tint / vertex paint', icon: '🎨', key: 'C' },
 ]
 
 const SWATCHES = ['#111111', '#ffffff', '#e8453c', '#f2a03d', '#f7e733', '#4caf50', '#3aa0ff', '#8e5cff', '#8d5524', '#7a7a7a']
@@ -36,6 +38,16 @@ export default function Toolbar() {
   const setFill = useStore((s) => s.setFill)
   const strokeOp = useStore((s) => s.strokeOp)
   const selection = useStore((s) => s.selection)
+  const multiframe = useStore((s) => s.multiframe)
+
+  const [palette, setPalette] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('2animate.palette') || '[]')
+    } catch {
+      return []
+    }
+  })
+  useEffect(() => localStorage.setItem('2animate.palette', JSON.stringify(palette)), [palette])
 
   return (
     <div className="toolbar">
@@ -133,6 +145,14 @@ export default function Toolbar() {
 
         {isSculpt(tool) && (
           <>
+            {tool === 'tint' && (
+              <div className="swatches">
+                {SWATCHES.map((c) => (
+                  <button key={c} className={'sw' + (brush.color === c ? ' on' : '')} style={{ background: c }} onClick={() => setBrush({ color: c })} />
+                ))}
+                <input type="color" value={brush.color} onChange={(e) => setBrush({ color: e.target.value })} />
+              </div>
+            )}
             <div className="row">
               <label>Radius</label>
               <input type="range" min={10} max={400} value={sculpt.radius} onChange={(e) => setSculpt({ radius: +e.target.value })} />
@@ -146,7 +166,8 @@ export default function Toolbar() {
             <label className="check">
               <input type="checkbox" checked={sculpt.maskSelected} onChange={(e) => setSculpt({ maskSelected: e.target.checked })} /> Affect selection only
             </label>
-            <p className="hint">Hold <b>Alt</b> to invert the brush (thin, fade, inflate, untwist).</p>
+            <p className="hint">Hold <b>Alt</b> to invert the brush (thin, fade, inflate, untwist, wipe tint).</p>
+            {multiframe.enabled && <p className="hint accent">Multiframe editing is ON — {multiframe.before} key(s) before and {multiframe.after} after are being sculpted too.</p>}
           </>
         )}
 
@@ -156,6 +177,26 @@ export default function Toolbar() {
             confirm, Esc to cancel. Ctrl+A selects all.
           </p>
         )}
+
+        <div className="group-label">My palette</div>
+        <div className="swatches">
+          {palette.map((c) => (
+            <button
+              key={c}
+              className={'sw' + (brush.color === c ? ' on' : '')}
+              style={{ background: c }}
+              onClick={() => setBrush({ color: c })}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setPalette(palette.filter((x) => x !== c))
+              }}
+              title="Click to use, right-click to remove"
+            />
+          ))}
+          <button className="sw add" onClick={() => setPalette([...new Set([...palette, brush.color])].slice(-24))} title="Save current colour">
+            ＋
+          </button>
+        </div>
 
         <div className="group-label">Stroke {selection.length ? `(${selection.length} selected)` : '(all)'}</div>
         <div className="op-grid">
