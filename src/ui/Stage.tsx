@@ -158,9 +158,22 @@ export default function Stage() {
         ctx.save();
         ctx.shadowColor = "rgba(0,0,0,0.45)";
         ctx.shadowBlur = 24 / s;
-        ctx.fillStyle = doc.bg;
+        ctx.fillStyle = doc.bg === "transparent" ? "#ffffff" : doc.bg || "#ffffff";
         ctx.fillRect(0, 0, doc.width, doc.height);
         ctx.restore();
+        if (doc.bg === "transparent") {
+          // checkerboard so it reads as "no background" rather than white paper
+          const cs = 16;
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(0, 0, doc.width, doc.height);
+          ctx.clip();
+          ctx.fillStyle = "#d9d9d9";
+          for (let yy = 0; yy < doc.height; yy += cs)
+            for (let xx = 0; xx < doc.width; xx += cs)
+              if (((xx / cs) | 0) % 2 === ((yy / cs) | 0) % 2) ctx.fillRect(xx, yy, cs, cs);
+          ctx.restore();
+        }
 
         ctx.save();
         ctx.beginPath();

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../core/store'
 import { download, exportPNGSequence, exportSVG, exportVideo, renderFrameToCanvas } from '../core/exporters'
 import type { Doc } from '../core/types'
@@ -13,7 +13,27 @@ export default function TopBar({ onImport, onHelp }: { onImport: () => void; onH
   const view = useStore((s) => s.view)
   const setView = useStore((s) => s.setView)
   const [busy, setBusy] = useState('')
+  const [menu, setMenu] = useState<'scene' | 'export' | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const barRef = useRef<HTMLDivElement>(null)
+
+  // click-outside closes the menus (hover menus vanished the moment the OS
+  // colour picker stole focus, which is why the background looked unchangeable)
+  useEffect(() => {
+    const away = (e: PointerEvent) => {
+      if (!barRef.current?.contains(e.target as Node)) setMenu(null)
+    }
+    window.addEventListener('pointerdown', away)
+    return () => window.removeEventListener('pointerdown', away)
+  }, [])
+
+  const BG_PRESETS: [string, string][] = [
+    ['#ffffff', 'white'],
+    ['#f6efe2', 'paper'],
+    ['#111111', 'black'],
+    ['#1e2a3a', 'night'],
+    ['transparent', 'none'],
+  ]
 
   const save = () => download(new Blob([JSON.stringify(doc)], { type: 'application/json' }), 'scene.2animate.json')
 
@@ -39,7 +59,7 @@ export default function TopBar({ onImport, onHelp }: { onImport: () => void; onH
   }
 
   return (
-    <div className="topbar">
+    <div className="topbar" ref={barRef}>
       <div className="brand">
         2<span>Animate</span>
       </div>
@@ -50,8 +70,8 @@ export default function TopBar({ onImport, onHelp }: { onImport: () => void; onH
       <span className="sep" />
       <button onClick={() => setView({ zoom: 1, x: 0, y: 0 })} title="Reset view">⤢ {Math.round(view.zoom * 100)}%</button>
       <span className="sep" />
-      <div className="menu">
-        <button>Scene ▾</button>
+      <div className={'menu' + (menu === 'scene' ? ' open' : '')}>
+        <button onClick={() => setMenu(menu === 'scene' ? null : 'scene')}>Scene ▾</button>
         <div className="drop-menu">
           <button onClick={save}>Save scene (.json)</button>
           <button onClick={() => fileRef.current?.click()}>Open scene…</button>
@@ -62,14 +82,31 @@ export default function TopBar({ onImport, onHelp }: { onImport: () => void; onH
             ×
             <input type="number" value={doc.height} onChange={(e) => commit((d) => void (d.height = Math.max(64, +e.target.value || 64)))} />
           </label>
-          <label className="menu-row">
-            Background
-            <input type="color" value={doc.bg} onChange={(e) => commit((d) => void (d.bg = e.target.value))} />
-          </label>
+          <div className="menu-row col">
+            <span>Background</span>
+            <div className="swatches">
+              {BG_PRESETS.map(([c, name]) => (
+                <button
+                  key={c}
+                  className={'sw' + (doc.bg === c ? ' on' : '') + (c === 'transparent' ? ' none' : '')}
+                  style={c === 'transparent' ? undefined : { background: c }}
+                  title={name}
+                  onClick={() => commit((d) => void (d.bg = c))}
+                />
+              ))}
+              <input
+                type="color"
+                value={doc.bg === 'transparent' ? '#ffffff' : doc.bg}
+                onChange={(e) => commit((d) => void (d.bg = e.target.value))}
+                title="Custom background colour"
+              />
+            </div>
+            <small className="dim">“none” = transparent, exports PNG/SVG with alpha.</small>
+          </div>
         </div>
       </div>
-      <div className="menu" data-tour="export">
-        <button>Export ▾</button>
+      <div className={'menu' + (menu === 'export' ? ' open' : '')} data-tour="export">
+        <button onClick={() => setMenu(menu === 'export' ? null : 'export')}>Export ▾</button>
         <div className="drop-menu">
           <button onClick={() => download(new Blob([]), '')} style={{ display: 'none' }} />
           <button

@@ -128,8 +128,8 @@ export async function exportVideo(doc: Doc, onProgress?: (n: number, total: numb
 export function exportSVG(doc: Doc, frame: number) {
   const parts: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${doc.width}" height="${doc.height}" viewBox="0 0 ${doc.width} ${doc.height}">`,
-    `<rect width="100%" height="100%" fill="${doc.bg}"/>`,
   ]
+  if (doc.bg && doc.bg !== 'transparent') parts.push(`<rect width="100%" height="100%" fill="${doc.bg}"/>`)
   for (const l of doc.layers) {
     if (!l.visible) continue
     let key = null as null | (typeof l.keys)[number]

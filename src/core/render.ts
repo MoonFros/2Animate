@@ -144,10 +144,14 @@ export function renderDoc(
   activeLayerId: string | null,
   opts: { background?: boolean } = {},
 ) {
-  ctx.clearRect(0, 0, doc.width, doc.height)
+  // NB: only clear when we own the background — the editor paints the paper
+  // (and its drop shadow) itself before calling us.
   if (opts.background !== false) {
-    ctx.fillStyle = doc.bg
-    ctx.fillRect(0, 0, doc.width, doc.height)
+    ctx.clearRect(0, 0, doc.width, doc.height)
+    if (doc.bg && doc.bg !== 'transparent') {
+      ctx.fillStyle = doc.bg
+      ctx.fillRect(0, 0, doc.width, doc.height)
+    }
   }
   for (const layer of doc.layers) {
     if (!layer.visible) continue
