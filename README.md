@@ -86,6 +86,29 @@ npm install
 npm run dev
 ```
 
+## Deploy to Vercel
+
+The repo ships a `vercel.json`, so there is nothing to configure.
+
+**From the website (easiest):**
+1. Push this repo to GitHub (already done) and sign in at [vercel.com](https://vercel.com) with GitHub.
+2. **Add New… → Project → Import** `MoonFros/2Animate`.
+3. Vercel detects Vite. Leave the defaults — build `npm run build`, output `dist`. No environment variables are needed.
+4. **Deploy.** You get a `*.vercel.app` URL in about a minute, and every push to `main` redeploys automatically.
+
+**From the terminal:**
+```bash
+npm i -g vercel
+vercel login
+vercel          # preview deployment
+vercel --prod   # production
+```
+
+Everything runs client-side — tracing, sculpting and export all happen in the browser — so the
+free Hobby tier is plenty and there is no server, database or API key to manage. Note that a few
+features need a secure context (HTTPS), which Vercel gives you: the phone-camera capture input and
+the WebM recorder.
+
 ## Honest scope note
 
 Blender is a 20-year-old desktop 3D suite. A browser app can match its **2D animation core**
