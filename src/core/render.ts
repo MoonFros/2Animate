@@ -50,7 +50,43 @@ function fillPath(ctx: CanvasRenderingContext2D, s: Stroke) {
   ctx.closePath()
 }
 
+/** Per-point strength (opacity) needs segment-by-segment compositing. */
+function drawStrokeVariableAlpha(ctx: CanvasRenderingContext2D, s: Stroke, colour: string, alpha: number) {
+  const pts = s.pts.length > 2 ? spline(s.pts, 3) : s.pts
+  ctx.fillStyle = colour
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1]
+    const b = pts[i]
+    const ra = Math.max(0.05, (s.width * (a.p ?? 1)) / 2)
+    const rb = Math.max(0.05, (s.width * (b.p ?? 1)) / 2)
+    const sa = ((a.s ?? 1) + (b.s ?? 1)) / 2
+    if (sa <= 0.004) continue
+    let dx = b.x - a.x
+    let dy = b.y - a.y
+    const l = Math.hypot(dx, dy) || 1
+    dx /= l
+    dy /= l
+    const nx = -dy
+    const ny = dx
+    ctx.globalAlpha = alpha * (s.opacity ?? 1) * sa
+    ctx.beginPath()
+    ctx.moveTo(a.x + nx * ra, a.y + ny * ra)
+    ctx.lineTo(b.x + nx * rb, b.y + ny * rb)
+    ctx.lineTo(b.x - nx * rb, b.y - ny * rb)
+    ctx.lineTo(a.x - nx * ra, a.y - ny * ra)
+    ctx.closePath()
+    ctx.moveTo(a.x + ra, a.y)
+    ctx.arc(a.x, a.y, ra, 0, Math.PI * 2)
+    ctx.moveTo(b.x + rb, b.y)
+    ctx.arc(b.x, b.y, rb, 0, Math.PI * 2)
+    ctx.fill()
+  }
+}
+
+const hasVariableAlpha = (s: Stroke) => s.pts.some((q) => q.s !== undefined && q.s < 0.999)
+
 export function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke, tint: string | null, alpha: number) {
+  if (!s.pts.length) return
   ctx.save()
   ctx.globalAlpha = alpha * (s.opacity ?? 1)
   if (s.fill) {
@@ -58,9 +94,14 @@ export function drawStroke(ctx: CanvasRenderingContext2D, s: Stroke, tint: strin
     ctx.fillStyle = s.fill
     ctx.fill()
   }
-  strokePath(ctx, s)
-  ctx.fillStyle = tint ?? s.color
-  ctx.fill()
+  const colour = tint ?? s.color
+  if (hasVariableAlpha(s)) {
+    drawStrokeVariableAlpha(ctx, s, colour, alpha)
+  } else {
+    strokePath(ctx, s)
+    ctx.fillStyle = colour
+    ctx.fill()
+  }
   ctx.restore()
 }
 
@@ -109,6 +150,8 @@ export function renderDoc(
 
   for (const layer of doc.layers) {
     if (!layer.visible) continue
+    ctx.save()
+    ctx.globalCompositeOperation = (layer.blend ?? 'normal') === 'normal' ? 'source-over' : (layer.blend as GlobalCompositeOperation)
 
     if (onion.enabled && layer.onion && layer.id === activeLayerId) {
       const sorted = [...layer.keys].sort((a, b) => a.frame - b.frame)
@@ -127,5 +170,6 @@ export function renderDoc(
 
     const k = keyAt(layer, frame)
     if (k) drawStrokes(ctx, k.strokes, layer.tint, layer.opacity)
+    ctx.restore()
   }
 }

@@ -3,6 +3,8 @@ export interface Pt {
   y: number
   /** 0..1 pressure / thickness multiplier */
   p: number
+  /** 0..1 per-point strength (opacity), defaults to 1 */
+  s?: number
 }
 
 export interface Stroke {
@@ -32,6 +34,8 @@ export interface Layer {
   /** tint applied on top of stroke colours, null = none */
   tint: string | null
   onion: boolean
+  /** canvas composite mode, mirrors Blender's layer blend */
+  blend?: 'normal' | 'multiply' | 'screen' | 'overlay' | 'lighten' | 'darken' | 'difference'
   keys: Keyframe[]
 }
 
@@ -46,12 +50,22 @@ export interface Doc {
 
 export type ToolId =
   | 'draw'
+  | 'line'
+  | 'fill'
   | 'erase'
+  | 'select'
+  | 'pan'
+  // sculpt mode brushes (Blender Grease Pencil parity)
   | 'smooth'
   | 'thickness'
+  | 'strength'
+  | 'randomize'
   | 'grab'
-  | 'select'
-  | 'line'
-  | 'pan'
+  | 'push'
+  | 'twist'
+  | 'pinch'
+
+export const SCULPT_TOOLS: ToolId[] = ['smooth', 'thickness', 'strength', 'randomize', 'grab', 'push', 'twist', 'pinch']
+export const isSculpt = (t: ToolId) => SCULPT_TOOLS.includes(t)
 
 export const uid = () => Math.random().toString(36).slice(2, 10)
